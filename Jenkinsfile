@@ -6,14 +6,14 @@ node('jenkins-agent'){
 
   workspace = pwd()   // Set the main workspace in your Jenkins agent
 
-  authToken = ""  // Get your user auth token for OpenShift
-  apiURL = ""     // URL for your OpenShift cluster API
+  authToken = ""      // Get your user auth token for OpenShift
+  apiURL = ""         // URL for your OpenShift cluster API
 
-  gitUser = ""    // Set your Git username
-  gitPass = ""    // Set your Git password
-  gitURL = ""     // Set the URL of your test suite repo
-  gitName = ""    // Set the name of your test suite repo
-  gitBranch = ""  // Set the branch of your test suite repo
+  gitUser = ""        // Set your Git username
+  gitPass = ""        // Set your Git password
+  gitURL = ""         // Set the URL of your test suite repo
+  gitName = ""        // Set the name of your test suite repo
+  gitBranch = ""      // Set the branch of your test suite repo
 
   jenkinsUser = ""    // Set username for Jenkins
   jenkinsPass = ""    // Set API token for Jenkins
@@ -61,7 +61,7 @@ node('jenkins-agent'){
 
   // Get all JMX files from JMeter directory
   // Pipeline Utility Steps Plugin --> findFiles
-  String files = findFiles(glob: 'jmeter/*.jmx')
+  String files = findFiles(glob: '**/jmeter/*.jmx')
 
   // Split file names into testFileNames array
   testFileNames = files.split('\n')
