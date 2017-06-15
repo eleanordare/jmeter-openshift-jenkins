@@ -1,0 +1,526 @@
+// Instantiate cluster API URLs
+devClusterAPIURL = 'https://master-paas-dev-njrar-01.ams1907.com'
+stressRRClusterAPIURL = 'https://master-paas-stress-njrar-01.ams1907.com'
+stressWWClusterAPIURL = 'https://master-paas-stress-gaalp-01.ams1907.com'
+
+devDockerRegistryURL = 'registry.paas-dev-njrar-01.ams1907.com'
+stressRRDockerRegistryURL = 'registry-njrar-01.paas-stress.ams1907.com'
+stressWWDockerRegistryURL = 'registry-gaalp-01.paas-stress.ams1907.com'
+
+// Collect the git info (Since the git plugin has trouble providing the URL and commit hash)
+gitURL = "http://tfs.ups.com:8080/tfs/UpsProd/P04AGit_CIPE/_git/cipe-stress-test"
+gitContextDir = "/"
+gitBranch = 'master'
+gitCredentialsId = 'CIPETFS'
+gitCommit = null
+gitName = "cipe-stress-test"
+
+// Declare Jenkins API credentialsId - For killing previously running feature pipeline jobs
+jenkinsAPICredentialsId = "cipe-jenkins-api"
+
+// Declare OpenShift project names
+projectDev = "cipe-develop"
+projectInt = "cipe-integration"
+projectStress = "cipe-stress"
+
+// Declare auth tokens for later instantiation via credentials plugin
+devClusterAuthToken = null
+stressRRClusterAuthToken = null
+stressWWClusterAuthToken = null
+
+// Declare workspace directory
+workspace = null
+
+// Get the latest git commit, workspace, and auth tokens (Must occur in jenkins agent)
+node('jenkins-agent-base') {
+  stage ("Build Stress Test Image") {
+
+      // Workspace must be set before getLatestGitCommit can be called
+      workspace = pwd()
+
+      withCredentials([[$class: 'StringBinding',
+        credentialsId: 'system-serviceaccount-jenkins-cipe-develop',
+        variable: 'authToken']]) {
+        devClusterAuthToken = authToken
+      }
+      withCredentials([[$class: 'StringBinding',
+        credentialsId: 'system-serviceaccount-jenkins-cipe-stress-rr',
+        variable: 'authToken']]) {
+        stressRRClusterAuthToken = authToken
+      }
+      withCredentials([[$class: 'StringBinding',
+        credentialsId: 'system-serviceaccount-jenkins-cipe-stress-ww',
+        variable: 'authToken']]) {
+        stressWWClusterAuthToken = authToken
+      }
+
+      testGitCommit = getLatestGitCommit(workspace, gitURL, gitBranch, gitName, gitCredentialsId)
+
+      // Checkout the integration test code
+      gitCheckout(workspace, gitURL, gitBranch, testGitCommit, gitName, gitCredentialsId)
+
+      // login to the project's cluster
+      login(devClusterAPIURL, devClusterAuthToken)
+
+      sh """
+        oc apply -f ${workspace}/cipe-stress-test/ocp/image-stream.yaml -n ${projectDev}
+        oc apply -f ${workspace}/cipe-stress-test/ocp/build-config.yaml -n ${projectDev}
+        oc start-build jmeter-stress-master -n ${projectDev} --follow
+      """
+
+  }
+
+
+  // /*
+  //  * the following section promotes the stress test image to cipe-integration
+  //  * then runs the tests in that project
+  //  *
+  //  * if you want to remove testing in cipe-integration and only include testing
+  //  * in the stress clusters --> comment out lines 83-110
+  //  * this removes the two integration stages
+  //  * don't comment out line 112 so the node still gets closed out
+  //  */
+  // stage ("Promote Image to Integration") {
+  //
+  //     print "----------------------------------------------------------------------"
+  //     print "            Promoting from ${projectDev} to ${projectInt}            "
+  //     print "----------------------------------------------------------------------"
+  //
+  //     // Apply the image-stream
+  //     sh """
+  //         oc apply -f ${workspace}/cipe-stress-test/ocp/image-stream.yaml -n ${projectInt}
+  //         oc apply -f ${workspace}/cipe-stress-test/ocp/async-job-template.yaml -n ${projectInt}
+  //         oc apply -f ${workspace}/cipe-stress-test/ocp/sync-job-template.yaml -n ${projectInt}
+  //     """
+  //
+  //     openshiftTag(namespace: projectDev,
+  //             sourceStream: 'rhel-jmeter-stress-master',
+  //             sourceTag: 'latest',
+  //             destinationNamespace: projectInt,
+  //             destinationStream: 'rhel-jmeter-stress-master',
+  //             destinationTag: 'latest',
+  //             apiURL: devClusterAPIURL,
+  //             authToken: devClusterAuthToken)
+  // } // stage
+  //
+  // stage('Run Stress Tests in Integration'){
+  //   runJMeterTestsStress("Stress", projectInt, gitURL,
+  //                       gitBranch, 'cipe-stress-test', 'jmeter-stress-master',
+  //                       devClusterAPIURL, devClusterAuthToken)
+  // } // stage
+
+} //node
+
+/*
+ * the following section promotes the stress test image to both stress environments
+ * then runs the tests in each stress cluster
+ */
+input message: 'Promote Image to Stress?'
+node('jenkins-agent-skopeo') {
+  stage ("Promote Image to Stress RR") {
+
+    print "----------------------------------------------------------------------"
+    print "        Promoting from ${projectDev} to ${projectStress} RR "
+    print "----------------------------------------------------------------------"
+
+    testGitCommit = getLatestGitCommit(workspace, gitURL, gitBranch, gitName, gitCredentialsId)
+
+    // Checkout the integration test code
+    gitCheckout(workspace, gitURL, gitBranch, testGitCommit, gitName, gitCredentialsId)
+
+    // login to the project's cluster
+    login(stressRRClusterAPIURL, stressRRClusterAuthToken)
+
+    // Apply the image-stream
+    sh """
+        oc apply -f ${workspace}/cipe-stress-test/ocp/image-stream.yaml -n ${projectStress}
+    """
+    promoteInterCluster("rhel-jmeter-stress-master", projectDev, devDockerRegistryURL, devClusterAuthToken,
+        projectStress, stressRRDockerRegistryURL, stressRRClusterAPIURL, stressRRClusterAuthToken)
+
+  } // stage
+
+  // stage ("Promote Image to Stress WW") {
+  //
+  //   print "----------------------------------------------------------------------"
+  //   print "        Promoting from ${projectDev} to ${projectStress} WW"
+  //   print "----------------------------------------------------------------------"
+  //
+  //   // login to the project's cluster
+  //   login(stressWWClusterAPIURL, stressWWClusterAuthToken)
+  //
+  //   // Apply the image-stream
+  //   sh """
+  //       oc apply -f ${workspace}/cipe-stress-test/ocp/image-stream.yaml -n ${projectStress}
+  //   """
+  //   promoteInterCluster("rhel-jmeter-stress-master", projectDev, devDockerRegistryURL, devClusterAuthToken,
+  //       projectStress, stressWWDockerRegistryURL, stressWWClusterAPIURL, stressWWClusterAuthToken)
+  //
+  // } // stage
+
+  stage ("Run Stress Tests"){
+
+    runJMeterTestsStress("StressRR", projectStress, gitURL,
+      gitBranch, 'cipe-stress-test', 'jmeter-stress-master',
+      stressRRClusterAPIURL, stressRRClusterAuthToken)
+
+    // runJMeterTestsStress("StressWW", projectStress, gitURL,
+    //   gitBranch, 'cipe-stress-test', 'jmeter-stress-master',
+    //   stressWWClusterAPIURL, stressWWClusterAuthToken)
+
+  } // stage
+} // node
+
+/**
+ * Clones and checks out the given Git repository branch and commit
+ * @param  String workspace     Path of the working directory to use
+ * @param  String url           URL of the Git repository
+ * @param  String branch        Branch to checkout
+ * @param  String commit        Short commit hash to set HEAD to
+ * @param  String targetDir     Target directory in the Git repository to clone
+ * @param  String credentialsId Id of the Git credentials to use
+ *  (From the credentials plugin in Cloudbees)
+ */
+def gitCheckout(String workspace, String url, String branch, String commit,
+                String targetDir, String credentialsId) {
+    withCredentials([[$class: 'UsernamePasswordMultiBinding', credentialsId: "${credentialsId}",
+                      passwordVariable: 'pass', usernameVariable: 'user']]) {
+        // Checkout the code and navigate to the target directory
+        int slashIdx = url.indexOf("://")
+        String urlWithCreds = url.substring(0, slashIdx + 3) +
+                "\"${user}:${pass}\"@" + url.substring(slashIdx + 3);
+
+        sh """
+          # Ensure the targetDir is deleted before we clone
+          rm -rf ${workspace}/${targetDir}
+          git clone -b ${branch} ${urlWithCreds} ${targetDir}
+          cd ${workspace}/${targetDir}
+          git reset --hard ${commit}
+          cd ${workspace}
+          echo `pwd && ls -l`
+        """
+    }
+}
+
+
+/**
+ * *** Note: Must execute on a node that has skopeo installed! ***
+ * Promotes the Docker image and OCP objects for a given microservice from a source
+ * project to a destination project, where both projects exist on different OCP clusters
+ * @param  String srcProject            Source project of the microservice image
+ * @param  String srcDockerRegistryURL  URL of the exposed source Docker registry
+ * @param  String srcClusterAuthToken   Auth token to use to authenticate against the src cluster's Docker registry
+ * @param  String destProject           Destination project that the microservice image
+ *  and OCP objects should be moved to
+ * @param  String destDockerRegistryURL URL of the exposed destination Docker registry
+ * @param  String destClusterAPIURL     API URL of the destination project's cluster
+ * @param  String destClusterAuthToken  Auth token to use to authenticate against the dest cluster
+ */
+def promoteInterCluster(String image, String srcProject, String srcDockerRegistryURL,
+                        String srcClusterAuthToken, String destProject, String destDockerRegistryURL,
+                        String destClusterAPIURL, String destClusterAuthToken) {
+    print "----------------------------------------------------------------------"
+    print "    Promoting from ${srcProject} to ${destProject} (inter-cluster)    "
+    print "----------------------------------------------------------------------"
+
+    def srcCreds = "jenkins:${srcClusterAuthToken}"
+    def destCreds = "jenkins:${destClusterAuthToken}"
+    def srcImage = "docker://${srcDockerRegistryURL}/${srcProject}/${image}:latest"
+    def destImage = "docker://${destDockerRegistryURL}/${destProject}/${image}:latest"
+
+    print "Importing image ${image} image into ${destProject}"
+    // Use skopeo to pull/push microservice image between cluster registries
+    try {
+      sh """
+        skopeo --insecure-policy copy --src-tls-verify=false --src-creds ${srcCreds} \
+            --dest-tls-verify=false --dest-creds ${destCreds} \
+            ${srcImage} ${destImage}
+      """
+    } catch (Exception e) {
+      print "Some error occured while attempting to use skopeo to promote the image."
+      print "Exception: ${e}"
+      print "Trying again..."
+      sh """
+        skopeo --insecure-policy copy --src-tls-verify=false --src-creds ${srcCreds} \
+            --dest-tls-verify=false --dest-creds ${destCreds} \
+            ${srcImage} ${destImage}
+      """
+    }
+
+}
+
+/**
+ * Logs into an OCP cluster given an API URL and an Auth Token
+ * ** Must be run in a node that has the oc client**
+ * @param  String apiURL      API URL of the target OCP cluster
+ * @param  String authToken   Auth token to use for login
+ */
+def login(String apiURL, String authToken) {
+    sh """
+        set +x
+        oc login --insecure-skip-tls-verify=true \
+          --token=${authToken} ${apiURL} >/dev/null 2>&1 || echo 'OpenShift login failed'
+       """
+}
+
+
+
+/**
+ * JMeter Stress testing
+ */
+def runJMeterTestsStress(String cluster, String project, String gitURL,
+                    String gitBranch, String gitName, String jobName,
+                    String clusterAPIURL, String clusterAuthToken){
+
+  print "--------------------------------------------------------------------------------------------------------"
+  print "                                        ${cluster} Testing"
+  print "--------------------------------------------------------------------------------------------------------"
+
+  login(clusterAPIURL, clusterAuthToken)
+
+  testGitCommit = getLatestGitCommit(workspace, gitURL, gitBranch, gitName, gitCredentialsId)
+
+  // Checkout the integration test code
+  gitCheckout(workspace, gitURL, gitBranch, testGitCommit, gitName, gitCredentialsId)
+
+  jobTemplatePath = "${workspace}/${gitName}/ocp/sync-job-template.yaml"
+
+  // get JMeter image from correct cluster & project
+  String imageURL = sh (
+    script:"""
+      oc get is/rhel-${jobName} -n ${project} --output=jsonpath={.status.dockerImageRepository}
+      """,
+    returnStdout: true
+  )
+  print "Image URL is: ${imageURL}"
+
+  String output = sh (
+    script:"""
+      cat ${workspace}/${gitName}/jmeter/Sync/testsToRun.txt
+      """,
+    returnStdout: true
+  )
+
+  def testFileNames = []
+  print "${cluster} tests collected:"
+  testFiles = output.split('\n')
+
+  for (int i=0; i<testFiles.size(); i++){
+    name = testFiles[i].split(',')[0]
+    testFileNames.add(name)
+    print name
+  }
+
+  def filename = null
+  def url = null
+
+  url = env.BUILD_URL + "input/Jmeter"
+  print "Jenkins return url: " + url
+
+  withCredentials([[$class: 'UsernamePasswordMultiBinding', credentialsId: jenkinsAPICredentialsId,
+                    passwordVariable: 'jmeterPass', usernameVariable: 'jmeterUser']]) {
+    sh """
+      oc delete job/${jobName} -n ${project} --ignore-not-found=true
+      oc process -f ${jobTemplatePath} -p \
+      JENKINS_PIPELINE_RETURN_URL=${url} \
+      USER_NAME=${jmeterUser} \
+      PASSWORD=${jmeterPass} \
+      CLUSTER=${cluster}-Sync \
+      IMAGE=${imageURL}:latest \
+      -n ${project} | oc create -f - -n ${project}
+    """
+  }
+
+// for every test, run job and get results
+for (int i=0; i<testFileNames.size(); i++) {
+
+  file = testFileNames[i]
+  fileName = file.replaceAll('.jmx','')
+  fileName = fileName.replaceAll(' ','')
+
+  print "Running ${cluster} tests: ${fileName}"
+
+  fileNameLowerCase = fileName.toLowerCase()
+  fileNameLowerCase = fileNameLowerCase.replaceAll('_','-')
+
+  // Block and wait for Job to return with Results file
+  print "Waiting for results from JMeter test job..."
+  def inputFile = input id: "Jmeter-${i}",
+    message: 'Waiting for remote system',
+    parameters: [
+      file(description: 'Performance Test Results',
+      name: "${fileName}-${cluster}-Sync")
+    ]
+
+  // Running Performance Plugin with JMeter to show results
+  performanceReport compareBuildPrevious: false,
+    configType: 'ART',
+    errorFailedThreshold: 0,
+    errorUnstableResponseTimeThreshold: '',
+    errorUnstableThreshold: 0,
+    failBuildIfNoResultFile: false,
+    ignoreFailedBuild: false,
+    ignoreUnstableBuild: true,
+    modeOfThreshold: false,
+    modePerformancePerTestCase: true,
+    modeThroughput: true,
+    nthBuildNumber: 0,
+    parsers: [[$class: 'JMeterParser', glob: inputFile.toString()]],
+    relativeFailedThresholdNegative: 0,
+    relativeFailedThresholdPositive: 0,
+    relativeUnstableThresholdNegative: 0,
+    relativeUnstableThresholdPositive: 0
+
+}
+
+  output = sh (
+    script:"""
+      cat ${workspace}/${gitName}/jmeter/Async/testsToRun.txt
+      """,
+    returnStdout: true
+  )
+
+  testFileNames = []
+  print "${cluster} tests collected:"
+  testFiles = output.split('\n')
+  def duration = ""
+
+  for (int i=0; i<testFiles.size(); i++){
+    splitFile = testFiles[i].split(',')
+    name = splitFile[0]
+    if (splitFile.size()>1){
+      duration = splitFile[1]
+      duration = duration.replaceAll(' ','')
+    } else {
+      duration = " "
+    }
+    testFileNames.add([name,duration])
+    print name
+  }
+
+  filename = null
+  url = null
+
+  jobTemplatePath = "${workspace}/${gitName}/ocp/async-job-template.yaml"
+
+  def parallelJobs = [:]
+
+  // for every test, run job and get results
+  for (int i=0; i<testFileNames.size(); i++) {
+
+    file = testFileNames[i][0]
+    duration = testFileNames[i][1]
+    duration = duration.replaceAll(' ','')
+    fileName = file.replaceAll('.jmx','')
+    fileName = fileName.replaceAll(' ','')
+
+    print "Running ${cluster} tests: ${fileName}"
+    url = env.BUILD_URL + "input/Jmeter-${i}/submit"
+    print "Jenkins return url: " + url
+
+    fileNameLowerCase = fileName.toLowerCase()
+    fileNameLowerCase = fileNameLowerCase.replaceAll('_','-')
+
+    parallelJobs[fileName] = transformIntoParallelStep(fileName, fileNameLowerCase, duration,
+                                                        cluster, project, jobName, url, imageURL,
+                                                        clusterAPIURL, clusterAuthToken, i)
+
+  }
+
+  parallel parallelJobs
+
+}
+
+def transformIntoParallelStep(String fileName, String fileNameLowerCase, String duration,
+                              String cluster, String project, String jobName, String url,
+                              String imageURL, String clusterAPIURL, String clusterAuthToken, int index){
+  return {
+
+    withCredentials([[$class: 'UsernamePasswordMultiBinding', credentialsId: jenkinsAPICredentialsId,
+                      passwordVariable: 'jmeterPass', usernameVariable: 'jmeterUser']]) {
+      sh """
+        oc delete job/${jobName}-${fileNameLowerCase} -n ${project} --ignore-not-found=true
+        oc process -f ${jobTemplatePath} -p \
+        JENKINS_PIPELINE_RETURN_URL=${url} \
+        FILE_NAME=${fileName} \
+        FILE_NAME_LOWER_CASE=${fileNameLowerCase} \
+        USER_NAME=${jmeterUser} \
+        PASSWORD=${jmeterPass} \
+        CLUSTER=${cluster}-Async \
+        IMAGE=${imageURL}:latest \
+        DURATION=${duration} \
+        -n ${project} | oc create -f - -n ${project}
+      """
+    }
+
+    // Block and wait for Job to return with Results file
+    print "Waiting for results from JMeter test job..."
+    def inputFile = input id: "Jmeter-${index}",
+      message: 'Waiting for remote system',
+      parameters: [
+        file(description: 'Performance Test Results',
+        name: "${fileName}-${cluster}-Async")
+      ]
+
+    // Running Performance Plugin with JMeter to show results
+    performanceReport compareBuildPrevious: false,
+      configType: 'ART',
+      errorFailedThreshold: 10,
+      errorUnstableResponseTimeThreshold: '',
+      errorUnstableThreshold: 5,
+      failBuildIfNoResultFile: false,
+      ignoreFailedBuild: false,
+      ignoreUnstableBuild: true,
+      modeOfThreshold: false,
+      modePerformancePerTestCase: true,
+      modeThroughput: true,
+      nthBuildNumber: 0,
+      parsers: [[$class: 'JMeterParser', glob: inputFile.toString()]],
+      relativeFailedThresholdNegative: 10,
+      relativeFailedThresholdPositive: 50,
+      relativeUnstableThresholdNegative: 20,
+      relativeUnstableThresholdPositive: 60
+  }
+}
+
+
+/**
+ * Gets the latest short commit sha1 hash from the given Git repository
+ * @param  String workspace     Path of the working directory to use
+ * @param  String url           URL of the Git repository
+ * @param  String branch        Branch to checkout
+ * @param  String targetDir     Target directory in the Git repository to clone
+ * @param  String credentialsId Id of the Git credentials to use
+ * @return String containing the latest short commit sha1 of the given
+ *  repository and branch
+ */
+String getLatestGitCommit(String workspace, String url, String branch,
+                          String targetDir, String credentialsId) {
+    withCredentials([[$class: 'UsernamePasswordMultiBinding', credentialsId: "${credentialsId}",
+                      passwordVariable: 'pass', usernameVariable: 'user']]) {
+        // Checkout the code and navigate to the target directory
+        int slashIdx = url.indexOf("://")
+        String urlWithCreds = url.substring(0, slashIdx + 3) +
+                "\"${user}:${pass}\"@" + url.substring(slashIdx + 3);
+
+        sh """
+          # Ensure the targetDir is deleted before we clone
+          rm -rf ${workspace}/${targetDir}
+          git clone -b ${branch} ${urlWithCreds} ${targetDir}
+        """
+    }
+
+    // Get the long commit sha1
+    String longCommit = sh (
+            script: """
+              cd ${workspace}/${targetDir}
+              git rev-parse HEAD
+              cd ${workspace}
+            """,
+            returnStdout: true
+    )
+
+    // Take first 6 characters of the commit sha1
+    String shortCommit = longCommit.substring(0, 6)
+    return shortCommit
+}

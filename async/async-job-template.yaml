@@ -1,0 +1,53 @@
+apiVersion: v1
+kind: Template
+metadata:
+  name: jmeter-test-suite-async
+objects:
+- apiVersion: batch/v1
+  kind: Job
+  metadata:
+    name: jmeter-test-suite-${FILE_NAME_LOWER_CASE}
+  spec:
+    completions: 1
+    parallelism: 1
+    template:
+      metadata:
+        name: jmeter-test-suite-${FILE_NAME_LOWER_CASE}
+      spec:
+        containers:
+        - name: jmeter-test-suite-${FILE_NAME_LOWER_CASE}
+          image: ${IMAGE}
+          command:
+          - /jmeter/async-runjob.sh
+          args:
+          - ${JENKINS_PIPELINE_RETURN_URL}
+          - ${FILE_NAME}
+          - ${USER_NAME}
+          - ${PASSWORD}
+          - ${FILE_NAME_LOWER_CASE}
+          imagePullPolicy: Always
+          resources: {}
+          terminationMessagePath: /dev/termination-log
+        dnsPolicy: ClusterFirst
+        restartPolicy: Never
+        securityContext: {}
+        terminationGracePeriodSeconds: 30
+parameters:
+- description: Jenkins Pipeline return URL for JMeter results files
+  name: JENKINS_PIPELINE_RETURN_URL
+  required: true
+- description: Test file name
+  name: FILE_NAME
+  required: true
+- description: Jenkins username for curl command
+  name: USER_NAME
+  required: true
+- description: Jenkins password for curl command
+  name: PASSWORD
+  required: true
+- description: JMeter image from specific cluster/project
+  name: IMAGE
+  required: true
+- description: Lowercase file name for job name
+  name: FILE_NAME_LOWER_CASE
+  required: true
