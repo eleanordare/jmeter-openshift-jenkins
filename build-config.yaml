@@ -1,0 +1,36 @@
+apiVersion: v1
+kind: BuildConfig
+metadata:
+  creationTimestamp: 2017-02-08T03:53:19Z
+  name: jmeter-test-suite
+spec:
+  output:
+    to:
+      kind: ImageStreamTag
+      name: jmeter-test-suite:latest
+  postCommit: {}
+  resources: {}
+  runPolicy: Serial
+  source:
+    git:
+      ref: master
+      uri: <GitHub repo URL>
+    sourceSecret:
+      name: gitsecret
+    type: Git
+    contextDir: /
+  strategy:
+    dockerStrategy:
+      from:
+        kind: ImageStreamTag
+        name: rhel7-jmeter3:latest
+        namespace: openshift
+    type: Docker
+  triggers:
+  - github:
+      secret: 1802aa5420b11b2c
+    type: GitHub
+  - imageChange: {}
+    type: ImageChange
+status:
+  lastVersion: 0
