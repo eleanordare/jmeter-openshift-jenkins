@@ -19,9 +19,9 @@ node('jenkins-agent'){
   jenkinsPass = ""    // Set API token for Jenkins
 
   // Set location of OpenShift objects in workspace
-  buildConfigPath = "${workspace}/${gitName}/ocp/build-config.yaml"
-  imageStreamPath = "${workspace}/${gitName}/ocp/image-stream.yaml"
-  jobTemplatePath = "${workspace}/${gitName}/ocp/job-template.yaml"
+  buildConfigPath = "${workspace}/${gitName}/build-config.yaml"
+  imageStreamPath = "${workspace}/${gitName}/image-stream.yaml"
+  jobTemplatePath = "${workspace}/${gitName}/job-template.yaml"
 
   project = ""    // Set the OpenShift project you're working in
   testSuiteName = "jmeter-test-suite"   // Name of the job/build/imagestream
