@@ -1,0 +1,50 @@
+apiVersion: v1
+kind: Template
+metadata:
+  name: jmeter-test-suite
+objects:
+- apiVersion: batch/v1
+  kind: Job
+  metadata:
+    name: jmeter-test-suite
+    labels:
+      jobName: jmeter-test-suite
+      buildNumber: ${BUILD_NUM}
+  spec:
+    completions: 1
+    parallelism: 1
+    template:
+      metadata:
+        name: jmeter-test-suite
+        labels:
+          jobName: jmeter-test-suite
+          buildNumber: ${BUILD_NUM}
+      spec:
+        containers:
+        - name: jmeter-test-suite
+          image: ${IMAGE}
+          command:
+          - /jmeter/runjob.sh
+          args:
+          - ${WEBHOOK_URL}
+          - ${FILE_NAME}
+          imagePullPolicy: Always
+          resources: {}
+          terminationMessagePath: /dev/termination-log
+        dnsPolicy: ClusterFirst
+        restartPolicy: Never
+        securityContext: {}
+        terminationGracePeriodSeconds: 30
+parameters:
+- description: Pipeline webhook URL to tell Jenkins when tests are completed
+  name: WEBHOOK_URL
+  required: true
+- description: Test file name
+  name: FILE_NAME
+  required: true
+- description: Pipeline build number from Jenkins
+  name: BUILD_NUM
+  required: true
+- description: JMeter image from specific cluster/project
+  name: IMAGE
+  required: true
